@@ -1,0 +1,6 @@
+[package]
+name = "konvoy"
+version = "0.1.0"
+authors = ["Andy Green <hello@andygrn.co.uk>"]
+
+[dependencies]
