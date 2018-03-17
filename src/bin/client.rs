@@ -1,40 +1,36 @@
+extern crate chrono;
+
 use std::io::{Read, Write, BufRead};
 use std::io::Error;
-use std::io::ErrorKind;
 use std::io::{BufReader, BufWriter};
 use std::net::TcpStream;
 use std::fs::File;
 
-fn expect_response(stream: &mut Read, expected_response: &str) -> Result<(), ()> {
-    let mut stream = stream.take(expected_response.len() as u64);
-    let mut buffer = String::new();
-    stream.read_to_string(&mut buffer).unwrap();
-    if buffer != expected_response {
-        return Err(())
-    }
-    Ok(())
-}
+use chrono::{DateTime, Utc};
 
 fn request_archives(stream: TcpStream) -> Result<usize, Error> {
     let mut stream_r = BufReader::new(&stream);
     let mut stream_w = BufWriter::new(&stream);
 
-    stream_w.write("SHARING?\n".as_bytes())?;
-    stream_w.flush().unwrap();
-
-    let response = expect_response(&mut stream_r, "YES\n");
-    if response.is_err() {
-        return Err(Error::new(ErrorKind::ConnectionAborted, "Not sending updates!"))
-    }
+    // let now: DateTime<Utc> = Utc::now();
 
     let following = BufReader::new(File::open("following.txt").unwrap());
-    for line in following.lines() {
-        let line = line.unwrap();
+    for id in following.lines() {
+        let id = id.unwrap();
 
-        // Ask for updates to the followed archive.
-        stream_w.write(format!("{}\n", &line).as_bytes())?;
+        let mut archives = std::fs::read_dir("archives_client").unwrap();
+        let existing_archive = archives.find(|archive| {
+            archive.as_ref().unwrap().file_name().into_string().unwrap().starts_with(&id)
+        });
+
+        if existing_archive.is_none() {
+            stream_w.write(format!("{}@0000000000\n", &id).as_bytes())?;
+        } else {
+            // Ask for updates to the followed archive.
+            let file_name = &existing_archive.unwrap().unwrap().file_name().into_string().unwrap();
+            stream_w.write(format!("{}\n", file_name).as_bytes())?;
+        }
         stream_w.flush().unwrap();
-        println!("{} - Requested update", &line);
 
         {
             // Skip file creation if server has no update.
@@ -43,7 +39,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
             if peekbuf[0] == 0x0 {
                 // No archive sent.
                 stream_r.read(&mut peekbuf).unwrap();
-                println!("{} - No update available", &line);
+                println!("{} No update available.", &id);
                 continue;
             }
         }
@@ -51,7 +47,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
         {
             // Download update into the archive file.
             let mut file = BufWriter::new(
-                File::create(format!("archives/{}.txt", &line)).unwrap()
+                File::create(format!("archives_client/{}@{}", &id, "1521242772")).unwrap()
             );
             for byte in stream_r.by_ref().bytes() {
                 let byte = byte.unwrap();
@@ -62,7 +58,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
                 file.write(&[byte]).unwrap();
                 file.flush().unwrap();
             }
-            println!("{} - Received update", &line);
+            println!("{} Updated.", &id);
         }
     }
 
