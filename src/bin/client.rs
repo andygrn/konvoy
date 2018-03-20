@@ -1,12 +1,12 @@
 extern crate chrono;
 
-use std::io::{Read, Write, BufRead};
+use std::io::{BufRead, Read, Write};
 use std::io::Error;
 use std::io::{BufReader, BufWriter};
 use std::net::TcpStream;
 use std::fs::File;
 
-use chrono::{DateTime, Utc};
+// use chrono::{DateTime, Utc};
 
 fn request_archives(stream: TcpStream) -> Result<usize, Error> {
     let mut stream_r = BufReader::new(&stream);
@@ -20,14 +20,25 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
 
         let mut archives = std::fs::read_dir("archives_client").unwrap();
         let existing_archive = archives.find(|archive| {
-            archive.as_ref().unwrap().file_name().into_string().unwrap().starts_with(&id)
+            archive
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .into_string()
+                .unwrap()
+                .starts_with(&id)
         });
 
         if existing_archive.is_none() {
             stream_w.write(format!("{}@0000000000\n", &id).as_bytes())?;
         } else {
             // Ask for updates to the followed archive.
-            let file_name = &existing_archive.unwrap().unwrap().file_name().into_string().unwrap();
+            let file_name = &existing_archive
+                .unwrap()
+                .unwrap()
+                .file_name()
+                .into_string()
+                .unwrap();
             stream_w.write(format!("{}\n", file_name).as_bytes())?;
         }
         stream_w.flush().unwrap();
@@ -47,7 +58,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
         {
             // Download update into the archive file.
             let mut file = BufWriter::new(
-                File::create(format!("archives_client/{}@{}", &id, "1521242772")).unwrap()
+                File::create(format!("archives/client/{}@{}", &id, "1521242772")).unwrap(),
             );
             for byte in stream_r.by_ref().bytes() {
                 let byte = byte.unwrap();
@@ -75,13 +86,13 @@ fn main() {
                     println!("Received updates.");
                 }
                 Err(e) => {
-                    println!("{}", e);
+                    eprintln!("{}", e);
                 }
             }
             println!("Disconnected from server.");
         }
-        Err(_e) => {
-            println!("Server connection failed.");
+        Err(e) => {
+            eprintln!("{}", e);
         }
     }
 }

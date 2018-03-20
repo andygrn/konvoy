@@ -1,6 +1,6 @@
 extern crate regex;
 
-use std::io::{Write, BufRead};
+use std::io::{BufRead, Write};
 use std::io::Error;
 use std::io::{BufReader, BufWriter};
 use std::net::{TcpListener, TcpStream};
@@ -14,7 +14,8 @@ struct ArchiveName {
 }
 
 fn parse_archive_name(name: &str) -> Result<ArchiveName, ()> {
-    let re = Regex::new(r"(?x)
+    let re = Regex::new(
+        r"(?x)
         ^(
             [0-9a-f]{8}- #
             [0-9a-f]{4}- #
@@ -24,18 +25,19 @@ fn parse_archive_name(name: &str) -> Result<ArchiveName, ()> {
         )@(
             \d{10}       # Unix timestamp
         )$
-    ").unwrap();
+    ",
+    ).unwrap();
 
     let captures = re.captures(name);
     if captures.is_none() {
-        return Err(())
+        return Err(());
     }
 
     let captures = captures.unwrap();
     let archive_id = captures.get(1);
     let archive_date = captures.get(2);
     if archive_id.is_none() || archive_date.is_none() {
-        return Err(())
+        return Err(());
     }
 
     Ok(ArchiveName {
@@ -61,9 +63,15 @@ fn send_archives(stream: TcpStream) -> Result<usize, Error> {
         }
         let name = name.unwrap();
 
-        let mut archives = std::fs::read_dir("archives_server").unwrap();
+        let mut archives = std::fs::read_dir("archives/server").unwrap();
         let existing_archive = archives.find(|archive| {
-            archive.as_ref().unwrap().file_name().into_string().unwrap().starts_with(&name.id)
+            archive
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .into_string()
+                .unwrap()
+                .starts_with(&name.id)
         });
 
         if existing_archive.is_none() {
@@ -73,7 +81,12 @@ fn send_archives(stream: TcpStream) -> Result<usize, Error> {
             continue;
         }
 
-        let existing_name = parse_archive_name(&existing_archive.unwrap().unwrap().file_name().into_string().unwrap());
+        let existing_name = parse_archive_name(&existing_archive
+            .unwrap()
+            .unwrap()
+            .file_name()
+            .into_string()
+            .unwrap());
         if existing_name.is_err() {
             println!("{} WTF.", &line);
             stream_w.write(&[0x0_u8])?; // Send EOF marker.
@@ -112,8 +125,8 @@ fn main() {
                 }
                 println!("Client disconnected.");
             }
-            Err(_e) => {
-                println!("Client connection failed.");
+            Err(e) => {
+                println!("Client connection failed: {}", e);
             }
         }
     }
