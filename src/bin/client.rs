@@ -18,7 +18,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
     for id in following.lines() {
         let id = id.unwrap();
 
-        let mut archives = std::fs::read_dir("archives_client").unwrap();
+        let mut archives = std::fs::read_dir("archives/client").unwrap();
         let existing_archive = archives.find(|archive| {
             archive
                 .as_ref()
