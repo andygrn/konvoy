@@ -1,11 +1,17 @@
 extern crate base64;
 extern crate chrono;
+#[macro_use]
+extern crate lazy_static;
 extern crate regex;
 extern crate rust_sodium;
 
+use std::io::{BufWriter, Cursor, Error as IoError, Read, Write};
+use std::fs::File;
+use std::path::Path;
 use self::rust_sodium::crypto::sign;
 use self::rust_sodium::crypto::sign::ed25519::{PublicKey, Signature};
 use self::chrono::{DateTime, NaiveDateTime, Utc};
+use self::regex::Regex;
 
 #[derive(Debug)]
 pub struct Archive {
@@ -13,26 +19,27 @@ pub struct Archive {
     pub version: u8,
     pub datetime: DateTime<Utc>,
     pub signature: Signature,
-    pub data: String,
+    pub data: Vec<u8>,
 }
 
 impl Archive {
-    pub fn from_str(input_str: &str) -> Result<Archive, ()> {
-        let name_regex = regex::Regex::new(
-            r"(?x)
-            ^(
-                [A-Za-z0-9_\-]{43} # Public key base64
-            )(
-                \d{3}              # Archive version
-            )(
-                \d{10}             # Unix timestamp
-            )(
-                [A-Za-z0-9_\-]{86} # Archive signature base64
-            )$
-        ",
-        ).unwrap();
-
-        let name_pieces = name_regex.captures(&input_str[..142]);
+    pub fn from_name(name: &str) -> Result<Archive, ()> {
+        lazy_static! {
+            static ref NAME_REGEX: Regex = Regex::new(
+                r"(?x)
+                    ^(
+                        [A-Za-z0-9_\-]{43} # Public key base64
+                    )(
+                        \d{3}              # Archive version
+                    )(
+                        \d{10}             # Unix timestamp
+                    )(
+                        [A-Za-z0-9_\-]{86} # Archive signature base64
+                    )$
+                ",
+            ).unwrap();
+        }
+        let name_pieces = NAME_REGEX.captures(name);
         if name_pieces.is_none() {
             return Err(());
         }
@@ -90,24 +97,57 @@ impl Archive {
             version: version.unwrap(),
             datetime: datetime,
             signature: signature.unwrap(),
-            // data: String::from(&input_str[142..]),
-            data: String::from("some data"),
+            data: Vec::new(),
         })
     }
 
-    pub fn verify(&self) -> bool {
-        let public_key_base64 = base64::encode_config(&self.public_key, base64::URL_SAFE_NO_PAD);
-        let archive_meta = format!(
+    pub fn from_stream(input_filename: &str, input_file: &mut Read) -> Result<Archive, ()> {
+        let archive = Archive::from_name(&input_filename);
+        if archive.is_err() {
+            return Err(());
+        }
+        let mut archive = archive.unwrap();
+        let read_result = input_file.read_to_end(&mut archive.data);
+        if read_result.is_err() {
+            return Err(());
+        }
+        Ok(archive)
+    }
+
+    pub fn write_to_disk(&self, path: &Path) -> Result<(), IoError> {
+        let mut pathbuf = path.to_path_buf();
+        pathbuf.push(self.get_filename() + &self.get_signature_base64());
+        let mut file = BufWriter::new(File::create(pathbuf.as_path())?);
+        file.write(&self.data)?;
+        file.flush()?;
+        Ok(())
+    }
+
+    pub fn get_filename(&self) -> String {
+        format!(
             "{}{:03}{:010}",
-            &public_key_base64,
+            &self.get_public_key_base64(),
             &self.version,
             &self.datetime.timestamp()
-        );
-        let data_to_verify = archive_meta + &String::from("some data");
-        sign::verify_detached(
-            &self.signature,
-            &data_to_verify.as_bytes(),
-            &self.public_key,
         )
+    }
+
+    pub fn get_data_size(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    pub fn get_public_key_base64(&self) -> String {
+        base64::encode_config(&self.public_key, base64::URL_SAFE_NO_PAD)
+    }
+
+    pub fn get_signature_base64(&self) -> String {
+        base64::encode_config(&self.signature, base64::URL_SAFE_NO_PAD)
+    }
+
+    pub fn verify(&self) -> bool {
+        let mut data_to_verify = Cursor::new(self.get_filename()).chain(Cursor::new(&self.data));
+        let mut data_vec = Vec::new();
+        data_to_verify.read_to_end(&mut data_vec).unwrap();
+        sign::verify_detached(&self.signature, &data_vec, &self.public_key)
     }
 }

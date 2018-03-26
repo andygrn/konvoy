@@ -1,50 +1,13 @@
-extern crate regex;
+extern crate byteorder;
+extern crate konvoy_archive;
 
 use std::io::{BufRead, Write};
 use std::io::Error;
 use std::io::{BufReader, BufWriter};
 use std::net::{TcpListener, TcpStream};
-
-use regex::Regex;
-
-#[derive(Debug)]
-struct ArchiveName {
-    id: String,
-    date: String,
-}
-
-fn parse_archive_name(name: &str) -> Result<ArchiveName, ()> {
-    let re = Regex::new(
-        r"(?x)
-        ^(
-            [0-9a-f]{8}- #
-            [0-9a-f]{4}- #
-            [0-9a-f]{4}- # GUID
-            [0-9a-f]{4}- #
-            [0-9a-f]{12} #
-        )@(
-            \d{10}       # Unix timestamp
-        )$
-    ",
-    ).unwrap();
-
-    let captures = re.captures(name);
-    if captures.is_none() {
-        return Err(());
-    }
-
-    let captures = captures.unwrap();
-    let archive_id = captures.get(1);
-    let archive_date = captures.get(2);
-    if archive_id.is_none() || archive_date.is_none() {
-        return Err(());
-    }
-
-    Ok(ArchiveName {
-        id: archive_id.unwrap().as_str().to_string(),
-        date: archive_date.unwrap().as_str().to_string(),
-    })
-}
+use std::fs::File;
+use byteorder::{BigEndian, WriteBytesExt};
+use konvoy_archive::Archive;
 
 fn send_archives(stream: TcpStream) -> Result<usize, Error> {
     let stream_r = BufReader::new(&stream);
@@ -53,55 +16,67 @@ fn send_archives(stream: TcpStream) -> Result<usize, Error> {
     for line in stream_r.lines() {
         let line = line.unwrap();
 
-        let name = parse_archive_name(&line);
+        let archive = Archive::from_name(&line);
 
-        if name.is_err() {
+        if archive.is_err() {
             println!("{} Invalid request.", &line);
-            stream_w.write(&[0x0_u8])?; // Send EOF marker.
+            stream_w.write_u64::<BigEndian>(0)?;
             stream_w.flush().unwrap();
             continue;
         }
-        let name = name.unwrap();
+        let archive = archive.unwrap();
 
         let mut archives = std::fs::read_dir("archives/server").unwrap();
-        let existing_archive = archives.find(|archive| {
-            archive
+        let archive_public_key_base64 = archive.get_public_key_base64();
+        let existing_archive = archives.find(|existing_archive| {
+            existing_archive
                 .as_ref()
                 .unwrap()
                 .file_name()
                 .into_string()
                 .unwrap()
-                .starts_with(&name.id)
+                .starts_with(&archive_public_key_base64)
         });
 
         if existing_archive.is_none() {
-            println!("{} Archive not here.", &line);
-            stream_w.write(&[0x0_u8])?; // Send EOF marker.
+            println!("{} Archive not here.", &archive_public_key_base64);
+            stream_w.write_u64::<BigEndian>(0)?;
             stream_w.flush().unwrap();
             continue;
         }
 
-        let existing_name = parse_archive_name(&existing_archive
+        let archive_filename = &existing_archive
             .unwrap()
             .unwrap()
             .file_name()
             .into_string()
-            .unwrap());
-        if existing_name.is_err() {
-            println!("{} WTF.", &line);
-            stream_w.write(&[0x0_u8])?; // Send EOF marker.
+            .unwrap();
+        let mut archive_file = File::open(format!("archives/server/{}", &archive_filename));
+        if archive_file.is_err() {
+            println!("{} Archive unavailable.", &line);
+            stream_w.write_u64::<BigEndian>(0)?;
             stream_w.flush().unwrap();
             continue;
         }
-        let existing_name = existing_name.unwrap();
+        let existing_archive = Archive::from_stream(archive_filename, &mut archive_file.unwrap());
+        if existing_archive.is_err() {
+            println!("{} WTF.", &line);
+            stream_w.write_u64::<BigEndian>(0)?;
+            stream_w.flush().unwrap();
+            continue;
+        }
+        let existing_archive = existing_archive.unwrap();
 
-        if name.date < existing_name.date {
-            stream_w.write(format!("File content for {}", &line).as_bytes())?;
-            println!("{} Sent update.", &line);
+        if archive.datetime < existing_archive.datetime {
+            println!("{} Sending update.", &line);
+            stream_w.write_u64::<BigEndian>(existing_archive.get_data_size())?;
+            stream_w.write(existing_archive.get_filename().as_bytes())?;
+            stream_w.write(existing_archive.get_signature_base64().as_bytes())?;
+            stream_w.write(&existing_archive.data)?;
         } else {
             println!("{} No update to send.", &line);
+            stream_w.write_u64::<BigEndian>(0)?;
         }
-        stream_w.write(&[0x0_u8])?; // Send EOF marker.
         stream_w.flush().unwrap();
     }
 
