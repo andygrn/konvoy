@@ -39,7 +39,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
         let mut file_name;
         let mut file_exists = false;
         if existing_archive.is_none() {
-            file_name = format!("{}{:03}000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", &id, &FILENAME_VERSION);
+            file_name = format!("{}{:03}000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.tar", &id, &FILENAME_VERSION);
         } else {
             file_exists = true;
             // Ask for updates to the followed archive.
@@ -66,7 +66,7 @@ fn request_archives(stream: TcpStream) -> Result<usize, Error> {
             // Download update into the archive file.
             let mut filename_buf = [0; HEADER_SIZE];
             stream_r.read(&mut filename_buf).unwrap();
-            let filename = String::from_utf8(filename_buf.to_vec()).unwrap();
+            let filename = String::from_utf8(filename_buf.to_vec()).unwrap() + ".tar";
             let archive = Archive::from_stream(
                 &filename,
                 &mut stream_r.by_ref().take(archive_data_size as u64),

@@ -35,7 +35,7 @@ impl Archive {
                         \d{10}             # Unix timestamp
                     )(
                         [A-Za-z0-9_\-]{86} # Archive signature base64
-                    )$
+                    )\.tar$
                 ",
             ).unwrap();
         }
@@ -116,7 +116,7 @@ impl Archive {
 
     pub fn write_to_disk(&self, path: &Path) -> Result<(), IoError> {
         let mut pathbuf = path.to_path_buf();
-        pathbuf.push(self.get_filename() + &self.get_signature_base64());
+        pathbuf.push(self.get_filename() + &self.get_signature_base64() + ".tar");
         let mut file = BufWriter::new(File::create(pathbuf.as_path())?);
         file.write(&self.data)?;
         file.flush()?;
